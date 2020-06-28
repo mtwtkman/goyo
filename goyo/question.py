@@ -1,13 +1,15 @@
-from typing import ClassVar, Optional, Tuple
-from contextlib import contextmanager
+from typing import ClassVar, Optional, Tuple, Set
 
 from .exception import ClosedQuestionException
-from .choices import ChoiceEnum
+from .choices import ChoiceEnum, ILLEGAL_CHOICE
+from .answer import Answer, MultipleAnswer, AnswerBase
 
 
 class QuestionBase:
     body: ClassVar[str]
     case_insensitive: ClassVar[bool] = False
+    answer: AnswerBase
+    delimiter: str = ': '
 
     def __init__(self):
         self.is_closed = False
@@ -20,15 +22,15 @@ class QuestionBase:
         self.is_closed = False
         return self
 
-    @contextmanager
-    def _acceptable(self):
-        if self.is_closed:
-            raise ClosedQuestionException
-        yield
+    def acceptable(self, answer: str) -> bool:
+        return True
 
     def accept(self, answer: str) -> 'QuestionBase':
-        with self._acceptable():
+        if self.is_closed:
+            raise ClosedQuestionException
+        if self.acceptable(answer):
             return self._accept(answer)
+        return self
 
     def _accept(self, answer: str) -> 'QuestionBase':
         raise NotImplementedError
@@ -36,63 +38,46 @@ class QuestionBase:
 
 class OneChoiceQuestion(QuestionBase):
     choices: ClassVar[ChoiceEnum]
-    delimiter: str = ': '
-
-    class ILLIGAL_CHOICE:
-        ...
 
     def __init__(self):
         super().__init__()
-        self._raw_answer: Optional[str] = Optional[None]
-        self.answer: Optional['OneChoiceQuestion.Choices'] = None
+        self.answer = Answer()
 
     def _accept(self, answer: str) -> 'OneChoiceQuestion':
-        self._raw_answer = answer
-        self.answer = self.choices.of(answer)
+        self.answer.save(self.choices.of(answer))  # type: ignore
         return self
 
     @property
     def is_correct(self) -> bool:
-        return self.answer is not self.choices.ILLEGAL_CHOICE
+        return self.answer.unwrap() is not ILLEGAL_CHOICE
 
-    def is_(self, value: str) -> bool:
-        choice = self.choices.select(value)
-        if choice is self.choices.ILLEGAL_CHOICE:
-            return False
-        return self.answer == choice
-
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'{self.body}\t{self.choices}{self.delimiter}'
 
 
 class FreeQuestion(QuestionBase):
-    multiple_answers: ClassVar[bool] = False
-    answer_duplicatable: ClassVar[bool] = False
+    multiple_answers: ClassVar[bool] = True
+    answer_duplicatable: ClassVar[bool] = True
 
     def __init__(self):
         super().__init__()
-        self._answers = []
+        self.answer = MultipleAnswer() if self.multiple_answers else Answer()
+        self._known_answer_elements: Set[str] = set()
 
-    @property
-    def _reached_limit(self) -> bool:
-        return not self.multiple_answers and len(self._answers) == 1
+    def acceptable(self, answer: str) -> bool:
+        s = answer if self.case_insensitive else answer.lower()
+        already_known = s in self._known_answer_elements
+        if not self.case_insensitive and not already_known:
+            self._known_answer_elements.add(s)
+        return (
+            (self.answer_duplicatable and not already_known) or
+            (not self.multiple_answers and len(self.answer) == 0) or
+            True
+        )
 
-    def has(self, value: str) -> bool:
-        return value in self._answers
-
-    def _accept(self, value: str) -> 'FreeQuestion':
-        v = value if self.case_insensitive else value.lower()
-        if (
-            not self._reached_limit and
-            (not self.answer_duplicatable and not self.has(v))
-        ):
-            self._answers.append(value)
+    def _accept(self, answer: str) -> 'FreeQuestion':
+        self.answer.save(answer)
         return self
 
-    @property
-    def answers(self) -> Tuple[str, ...]:
-        return tuple(self._answers)
-
-    def __iter__(self):
-        for x in self._answers:
-            yield x
+    def __repr__(self):
+        return f'{self.body}{self.delimiter}'
