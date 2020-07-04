@@ -24,13 +24,15 @@ class ChoicesMeta(type):
                 return ILLEGAL_CHOICE
             return getattr(c(), name)
 
+        @classmethod
+        def display(cls) -> str:
+            s = '/'.join(c._members.values())
+            return f'[{s}]'
+
         c.select = select
         c.of = of
+        c.display = display
         return c
-
-    def __str__(cls) -> str:
-        s = '/'.join(cls._members.values())  # type: ignore
-        return f'[{s}]'
 
 
 class ChoiceEnum(metaclass=ChoicesMeta):
